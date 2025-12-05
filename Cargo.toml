@@ -1,10 +1,10 @@
 [package]
 name = "sherif"
-version = "1.0.2"
+version = "1.9.0"
 edition = "2021"
 license = "MIT"
 authors = ["Tom Lienard"]
-description = "Opinionated, zero-config linter for JavaScript monorepos."
+description = "Opinionated, zero-config linter for TypeScript & JavaScript monorepos."
 homepage = "https://github.com/QuiiBz/sherif"
 repository = "https://github.com/QuiiBz/sherif"
 keywords = [
@@ -18,12 +18,12 @@ readme = "./README.md"
 
 [dependencies]
 anyhow = "1.0.75"
-clap = { version = "4.4.3", features = ["derive"] }
+clap = { version = "4.5.40", features = ["derive"] }
 colored = "2.0.4"
 detect-indent = "0.1.0"
 detect-newline-style = "0.1.2"
 indexmap = { version = "2.0.0", features = ["serde"] }
-inquire = "0.6.2"
+inquire = "0.9.1"
 semver = "1.0.18"
 serde = { version = "1.0.188", features = ["derive"] }
 serde_json = { version = "1.0.107", features = ["preserve_order"] }

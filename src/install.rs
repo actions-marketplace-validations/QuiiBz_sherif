@@ -18,7 +18,7 @@ impl PackageManager {
     pub fn resolve() -> Result<Self> {
         if fs::metadata("package-lock.json").is_ok() {
             return Ok(PackageManager::Npm);
-        } else if fs::metadata("bun.lockb").is_ok() {
+        } else if fs::metadata("bun.lockb").is_ok() || fs::metadata("bun.lock").is_ok() {
             return Ok(PackageManager::Bun);
         } else if fs::metadata("yarn.lock").is_ok() {
             return Ok(PackageManager::Yarn);
@@ -29,6 +29,8 @@ impl PackageManager {
         let package_manager =
             Select::new("Select a package manager to use", PACKAGE_MANAGERS.to_vec())
                 .with_render_config(get_render_config())
+                .with_vim_mode(true)
+                .without_filtering()
                 .with_help_message("Enter to select")
                 .prompt();
 
@@ -90,12 +92,20 @@ mod test {
 
         fs::File::create("package-lock.json").unwrap();
         assert_eq!(PackageManager::resolve().unwrap(), PackageManager::Npm);
-
         fs::remove_file("package-lock.json").unwrap();
+
+        fs::File::create("bun.lockb").unwrap();
+        assert_eq!(PackageManager::resolve().unwrap(), PackageManager::Bun);
+        fs::remove_file("bun.lockb").unwrap();
+
+        fs::File::create("bun.lock").unwrap();
+        assert_eq!(PackageManager::resolve().unwrap(), PackageManager::Bun);
+        fs::remove_file("bun.lock").unwrap();
+
         fs::File::create("yarn.lock").unwrap();
         assert_eq!(PackageManager::resolve().unwrap(), PackageManager::Yarn);
-
         fs::remove_file("yarn.lock").unwrap();
+
         assert_eq!(PackageManager::resolve().unwrap(), PackageManager::Pnpm);
     }
 
@@ -104,7 +114,9 @@ mod test {
         let args = Args {
             path: "fixtures/install".into(),
             fix: false,
+            select: None,
             no_install: false,
+            fail_on_warnings: false,
             ignore_rule: Vec::new(),
             ignore_package: Vec::new(),
             ignore_dependency: Vec::new(),

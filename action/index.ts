@@ -4,6 +4,7 @@ import * as github from '@actions/github';
 import * as exec from '@actions/exec';
 import * as os from 'os';
 import * as path from 'path';
+import * as fs from 'fs';
 import * as fsp from 'fs/promises';
 
 async function run(): Promise<void> {
@@ -11,7 +12,7 @@ async function run(): Promise<void> {
     // Get inputs
     const version = core.getInput('version');
     const token = core.getInput('github-token');
-    const additionalArgs = core.getInput('args');
+    let additionalArgs = core.getInput('args');
 
     // Initialize octokit
     const octokit = github.getOctokit(token);
@@ -30,6 +31,20 @@ async function run(): Promise<void> {
     const platform = os.platform();
     const arch = os.arch();
 
+    const isMusl = (): boolean => {
+      if (platform !== 'linux') {
+        return false;
+      }
+
+      // Check for musl dynamic linker
+      try {
+        return fs.existsSync('/lib/ld-musl-x86_64.so.1') ||
+               fs.existsSync('/lib/ld-musl-aarch64.so.1');
+      } catch {
+        return false;
+      }
+    };
+
     // Map platform and architecture to release asset names
     const platformTargets: Record<string, Record<string, string>> = {
       'darwin': {
@@ -41,8 +56,8 @@ async function run(): Promise<void> {
         'x64': 'x86_64-pc-windows-msvc'
       },
       'linux': {
-        'arm64': 'aarch64-unknown-linux-gnu',
-        'x64': 'x86_64-unknown-linux-gnu'
+        'arm64': isMusl() ? 'aarch64-unknown-linux-musl' : 'aarch64-unknown-linux-gnu',
+        'x64': isMusl() ? 'x86_64-unknown-linux-musl' : 'x86_64-unknown-linux-gnu'
       }
     };
 
@@ -91,6 +106,9 @@ async function run(): Promise<void> {
     core.info('Sherif has been installed successfully');
 
     // Prepare arguments
+    if (!additionalArgs) {
+      additionalArgs = (await getArgsFromPackageJson()) || '';
+    }
     const args = additionalArgs.split(' ').filter(arg => arg !== '');
 
     // Configure output options to preserve colors
@@ -116,6 +134,28 @@ async function run(): Promise<void> {
     } else {
       core.setFailed('An unexpected error occurred');
     }
+  }
+}
+
+async function getArgsFromPackageJson() {
+  try {
+    const packageJsonFile = await fsp.readFile(
+      path.resolve(process.cwd(), 'package.json')
+    );
+    const packageJson = JSON.parse(packageJsonFile.toString());
+
+    // Extract args from the `sherif` script in package.json, starting after
+    // `sherif ` and ending before the next `&&` or end of line
+    const regexResult = /sherif\s([^&&]*)/g.exec(
+      packageJson.scripts.sherif
+    );
+    if (regexResult && regexResult.length > 1) {
+      const args = regexResult[1];
+      core.info(`Using the arguments "${args}" from the root package.json`);
+      return args;
+    }
+  } catch {
+    core.info('Failed to extract args from package.json');
   }
 }
 

@@ -3,7 +3,7 @@
     <img alt="" height="200px" src="https://github.com/QuiiBz/sherif/blob/main/assets/logo.png" />
   </picture>
   <br />
-  <b>Sherif</b>: Opinionated, zero-config linter for JavaScript monorepos
+  <b>Sherif</b>: Opinionated, zero-config linter for TypeScript & JavaScript monorepos
 </p>
 
 ---
@@ -12,26 +12,32 @@
 
 ## About
 
-Sherif is an opinionated, zero-config linter for JavaScript monorepos. It runs fast in any monorepo and enforces rules to provide a better, standardized DX.
+Sherif is an opinionated, zero-config linter for TypeScript & JavaScript monorepos. It runs fast in any monorepo and enforces rules to provide a better, standardized DX.
 
 ## Features
 
-- ✨ **PNPM, NPM, Yarn...**: sherif works with all package managers
+- ✨ **PNPM, Bun, NPM, Yarn...**: sherif works with all package managers
 - 🔎 **Zero-config**: it just works and prevents regressions
 - ⚡ **Fast**: doesn't need `node_modules` installed, written in 🦀 Rust
 
 ## Installation
 
-Run `sherif` in the root of your monorepo to list the found issues. Any error will cause Sherif to exit with a code 1:
+Run `sherif` in the root of your monorepo to list the found issues. Any error will cause Sherif to [exit with a code 1](#exit-code):
 
 ```bash
 # PNPM
 pnpm dlx sherif@latest
+# Bun
+bunx sherif@latest
 # NPM
 npx sherif@latest
+# Yarn
+yarn dlx sherif@latest
 ```
 
 We recommend running Sherif in your CI once [all errors are fixed](#autofix). Run it by **specifying a version instead of latest**. This is useful to prevent regressions (e.g. when adding a library to a package but forgetting to update the version in other packages of the monorepo).
+
+When using the GitHub Action, it will search for a `sherif` script in the root `package.json` and use the same arguments automatically to avoid repeating them twice. You can override this behaviour with the `args` parameter.
 
 <details>
 
@@ -51,7 +57,7 @@ jobs:
       - uses: QuiiBz/sherif@v1
         # Optionally, you can specify a version and arguments to run Sherif with:
         # with:
-          # version: 'v1.0.2'
+          # version: 'v1.9.0'
           # args: '--ignore-rule root-package-manager-field'
 
 # Using `npx` to run Sherif
@@ -67,7 +73,7 @@ jobs:
       - uses: actions/setup-node@v3
         with:
           node-version: 20
-      - run: npx sherif@1.0.2
+      - run: npx sherif@1.9.0
 ```
 
 </details>
@@ -80,13 +86,27 @@ Most issues can be automatically fixed by using the `--fix` (or `-f`) flag. Sher
 sherif --fix
 ```
 
-### No-install mode
+### Autofixing the [`multiple-dependency-versions`](#multiple-dependency-versions-) rule
 
-If you don't want Sherif to run your packager manager's `install` command after running autofix, you can use the `--no-install` flag: 
+By default, running `--fix` with the `multiple-dependency-versions` rule will ask you to select which version to use for each dependency with multiple versions across the monorepo. If that doesn't work for you (e.g., you are running Sherif in a non-interactive environment), you can use the `--select` (of `-s`) flag to automatically select the highest or lowest version of every dependency:
 
 ```bash
+# Autofix and select the highest version for each dependency matching the `multiple-dependency-versions` rule
+sherif --fix --select highest
+```
+
+### No-install mode
+
+If you don't want Sherif to run your packager manager's `install` command after running autofix, you can use the `--no-install` flag:
+
+```bash
+# Autofix without running the package manager's install command
 sherif --fix --no-install
 ```
+
+## Exit code
+
+By default, Sherif will exit with code `1` if any error issues are found. If you only have warning issues or no issues at all, Sherif will exit with code `0`. You can change this behavior to always exit with code `1` if any issues are found, including warnings, by using the `--fail-on-warnings` option.
 
 ## Rules
 
@@ -106,9 +126,6 @@ sherif -p @repo/tools
 sherif -p "./integrations/*"
 ```
 
-> **Note**
-> Sherif doesn't have many rules for now, but will likely have more in the future (along with more features).
-
 #### `empty-dependencies` ❌
 
 `package.json` files should not have empty dependencies fields.
@@ -123,9 +140,32 @@ You can ignore this rule for a specific dependency and version or all versions o
 # Ignore only the specific dependency version mismatch
 sherif -i react@17.0.2 -i next@13.2.4
 
+# Ignore all versions mismatch of dependencies that start with @next/
+sherif -i @next/*
+
 # Completely ignore all versions mismatch of these dependencies
 sherif -i react -i next
 ```
+
+#### `unsync-similar-dependencies` ❌
+
+Similar dependencies in a given `package.json` should use the same version. For example, if you use both `react` and `react-dom` dependencies in the same `package.json`, this rule will enforce that they use the same version.
+
+<details>
+
+<summary>List of detected similar dependencies</summary>
+
+- `react`, `react-dom`
+- `eslint-config-next`, `@next/eslint-plugin-next`, `@next/font` `@next/bundle-analyzer`, `@next/third-parties`, `@next/mdx`, `next`
+- `@trpc/client`, `@trpc/server`, `@trpc/next`, `@trpc/react-query`
+- `eslint-config-turbo`, `eslint-plugin-turbo`, `@turbo/gen`, `turbo-ignore`, `turbo`
+- `sb`, `storybook`, `@storybook/codemod`, `@storybook/cli`, `@storybook/channels`, `@storybook/addon-actions`, `@storybook/addon-links`, `@storybook/react`, `@storybook/react-native`, `@storybook/components`, `@storybook/addon-backgrounds`, `@storybook/addon-viewport`, `@storybook/angular`, `@storybook/addon-a11y`, `@storybook/addon-jest`, `@storybook/client-logger`, `@storybook/node-logger`, `@storybook/core`, `@storybook/addon-storysource`, `@storybook/html`, `@storybook/core-events`, `@storybook/svelte`, `@storybook/ember`, `@storybook/addon-ondevice-backgrounds`, `@storybook/addon-ondevice-notes`, `@storybook/preact`, `@storybook/theming`, `@storybook/router`, `@storybook/addon-docs`, `@storybook/addon-ondevice-actions`, `@storybook/source-loader`, `@storybook/preset-create-react-app`, `@storybook/web-components`, `@storybook/addon-essentials`, `@storybook/server`, `@storybook/addon-toolbars`, `@storybook/addon-controls`, `@storybook/core-common`, `@storybook/builder-webpack5`, `@storybook/core-server`, `@storybook/csf-tools`, `@storybook/addon-measure`, `@storybook/addon-outline`, `@storybook/addon-ondevice-controls`, `@storybook/instrumenter`, `@storybook/addon-interactions`, `@storybook/docs-tools`, `@storybook/builder-vite`, `@storybook/telemetry`, `@storybook/core-webpack`, `@storybook/preset-html-webpack`, `@storybook/preset-preact-webpack`, `@storybook/preset-svelte-webpack`, `@storybook/preset-react-webpack`, `@storybook/html-webpack5`, `@storybook/preact-webpack5`, `@storybook/svelte-webpack5`, `@storybook/web-components-webpack5`, `@storybook/preset-server-webpack`, `@storybook/react-webpack5`, `@storybook/server-webpack5`, `@storybook/addon-highlight`, `@storybook/blocks`, `@storybook/builder-manager`, `@storybook/react-vite`, `@storybook/svelte-vite`, `@storybook/web-components-vite`, `@storybook/nextjs`, `@storybook/types`, `@storybook/manager`, `@storybook/csf-plugin`, `@storybook/preview`, `@storybook/manager-api`, `@storybook/preview-api`, `@storybook/html-vite`, `@storybook/sveltekit`, `@storybook/preact-vite`, `@storybook/addon-mdx-gfm`, `@storybook/react-dom-shim`, `create-storybook`, `@storybook/addon-onboarding`, `@storybook/react-native-theming`, `@storybook/addon-themes`, `@storybook/test`, `@storybook/react-native-ui`, `@storybook/experimental-nextjs-vite`, `@storybook/experimental-addon-test`, `@storybook/react-native-web-vite`
+- `prisma`, `@prisma/client`, `@prisma/instrumentation`
+- `typescript-eslint`, `@typescript-eslint/eslint-plugin`, `@typescript-eslint/parser`
+- `@stylistic/eslint-plugin-js`, `@stylistic/eslint-plugin-ts`, `@stylistic/eslint-plugin-migrate`, `@stylistic/eslint-plugin`, `@stylistic/eslint-plugin-jsx`, `@stylistic/eslint-plugin-plus`
+- `playwright`, `@playwright/test`
+
+</details>
 
 #### `non-existant-packages` ⚠️
 
@@ -168,4 +208,3 @@ Dependencies should be ordered alphabetically to prevent complex diffs when inst
 ## License
 
 [MIT](./LICENSE)
-

@@ -1,11 +1,15 @@
 use crate::args::Args;
 use crate::packages::root::RootPackage;
+use crate::packages::semversion::SemVersion;
 use crate::packages::{Package, PackagesList};
 use crate::printer::print_error;
 use crate::rules::multiple_dependency_versions::MultipleDependencyVersionsIssue;
 use crate::rules::non_existant_packages::NonExistantPackagesIssue;
 use crate::rules::packages_without_package_json::PackagesWithoutPackageJsonIssue;
 use crate::rules::types_in_dependencies::TypesInDependenciesIssue;
+use crate::rules::unsync_similar_dependencies::{
+    SimilarDependency, UnsyncSimilarDependenciesIssue,
+};
 use crate::rules::{BoxIssue, IssuesList, PackageType};
 use anyhow::{anyhow, Result};
 use indexmap::IndexMap;
@@ -47,8 +51,17 @@ pub fn collect_packages(args: &Args) -> Result<PackagesList> {
 
     let mut packages_issues: Vec<BoxIssue> = Vec::new();
 
-    let mut add_package =
-        |packages_issues: &mut Vec<BoxIssue>, path: PathBuf| match Package::new(path.clone()) {
+    let mut add_package = |packages_issues: &mut Vec<BoxIssue>, path: PathBuf| {
+        // Ignore hidden directories, e.g. `.npm`, `.react-email`
+        if let Some(stem) = path.file_stem() {
+            if let Some(stem) = stem.to_str() {
+                if stem.starts_with('.') {
+                    return;
+                }
+            }
+        }
+
+        match Package::new(path.clone()) {
             Ok(package) => packages.push(package),
             Err(error) => {
                 if error.to_string().contains("not found") {
@@ -60,7 +73,8 @@ pub fn collect_packages(args: &Args) -> Result<PackagesList> {
                     std::process::exit(1);
                 }
             }
-        };
+        }
+    };
 
     if let Some(packages) = &packages_list {
         let packages = packages
@@ -237,6 +251,7 @@ pub fn collect_issues(args: &Args, packages_list: PackagesList) -> IssuesList<'_
 
     let mut all_dependencies = IndexMap::new();
     let mut joined_dependencies = IndexMap::new();
+    let mut similar_dependencies_by_package = IndexMap::new();
 
     if let Some(dependencies) = root_package.get_dependencies() {
         joined_dependencies.extend(dependencies);
@@ -303,6 +318,19 @@ pub fn collect_issues(args: &Args, packages_list: PackagesList) -> IssuesList<'_
     }
 
     for (name, versions) in all_dependencies {
+        if let Ok(similar_dependency) = SimilarDependency::try_from(name.as_str()) {
+            for (path, version) in versions.iter() {
+                similar_dependencies_by_package
+                    .entry(path.clone())
+                    .or_insert_with(
+                        IndexMap::<SimilarDependency, IndexMap<SemVersion, String>>::new,
+                    )
+                    .entry(similar_dependency.clone())
+                    .or_insert_with(IndexMap::new)
+                    .insert(version.clone(), name.clone());
+            }
+        }
+
         let mut filtered_versions = versions
             .iter()
             .filter(|(_, version)| {
@@ -320,13 +348,36 @@ pub fn collect_issues(args: &Args, packages_list: PackagesList) -> IssuesList<'_
                 .windows(2)
                 .all(|window| window[0] == window[1])
             && !args.ignore_dependency.contains(&name)
+            && !args.ignore_dependency.iter().any(|dependency| {
+                if dependency.ends_with('*') {
+                    if dependency.starts_with('*') {
+                        return name
+                            .contains(dependency.trim_start_matches('*').trim_end_matches('*'));
+                    }
+                    return name.starts_with(dependency.trim_end_matches('*'));
+                } else if dependency.starts_with('*') {
+                    return name.ends_with(dependency.trim_start_matches('*'));
+                }
+                false
+            })
         {
             filtered_versions.sort_keys();
 
             issues.add_raw(
                 PackageType::None,
-                MultipleDependencyVersionsIssue::new(name, filtered_versions),
+                MultipleDependencyVersionsIssue::new(name, filtered_versions, args.select.clone()),
             );
+        }
+    }
+
+    for (path, similar_dependencies) in similar_dependencies_by_package {
+        for (similar_dependency, versions) in similar_dependencies {
+            if versions.len() > 1 {
+                issues.add_raw(
+                    PackageType::Package(path.clone()),
+                    UnsyncSimilarDependenciesIssue::new(similar_dependency, versions),
+                );
+            }
         }
     }
 
@@ -343,7 +394,9 @@ mod test {
         let args = Args {
             path: "unknown".into(),
             fix: false,
+            select: None,
             no_install: true,
+            fail_on_warnings: false,
             ignore_rule: Vec::new(),
             ignore_package: Vec::new(),
             ignore_dependency: Vec::new(),
@@ -363,7 +416,9 @@ mod test {
         let args = Args {
             path: "fixtures/empty".into(),
             fix: false,
+            select: None,
             no_install: true,
+            fail_on_warnings: false,
             ignore_rule: Vec::new(),
             ignore_package: Vec::new(),
             ignore_dependency: Vec::new(),
@@ -383,7 +438,9 @@ mod test {
         let args = Args {
             path: "fixtures/basic".into(),
             fix: false,
+            select: None,
             no_install: true,
+            fail_on_warnings: false,
             ignore_rule: Vec::new(),
             ignore_package: Vec::new(),
             ignore_dependency: Vec::new(),
@@ -409,7 +466,9 @@ mod test {
         let args = Args {
             path: "fixtures/pnpm".into(),
             fix: false,
+            select: None,
             no_install: true,
+            fail_on_warnings: false,
             ignore_rule: Vec::new(),
             ignore_package: Vec::new(),
             ignore_dependency: Vec::new(),
@@ -435,7 +494,9 @@ mod test {
         let args = Args {
             path: "fixtures/yarn-nohoist".into(),
             fix: false,
+            select: None,
             no_install: true,
+            fail_on_warnings: false,
             ignore_rule: Vec::new(),
             ignore_package: Vec::new(),
             ignore_dependency: Vec::new(),
@@ -461,7 +522,9 @@ mod test {
         let args = Args {
             path: "fixtures/no-workspace-pnpm".into(),
             fix: false,
+            select: None,
             no_install: true,
+            fail_on_warnings: false,
             ignore_rule: Vec::new(),
             ignore_package: Vec::new(),
             ignore_dependency: Vec::new(),
@@ -481,7 +544,9 @@ mod test {
         let args = Args {
             path: "fixtures/without-package-json".into(),
             fix: false,
+            select: None,
             no_install: true,
+            fail_on_warnings: false,
             ignore_rule: Vec::new(),
             ignore_package: Vec::new(),
             ignore_dependency: Vec::new(),
@@ -508,7 +573,9 @@ mod test {
         let args = Args {
             path: "fixtures/ignore-paths".into(),
             fix: false,
+            select: None,
             no_install: true,
+            fail_on_warnings: false,
             ignore_rule: Vec::new(),
             ignore_package: Vec::new(),
             ignore_dependency: Vec::new(),
@@ -543,7 +610,9 @@ mod test {
         let args = Args {
             path: "fixtures/root-issues".into(),
             fix: false,
+            select: None,
             no_install: true,
+            fail_on_warnings: false,
             ignore_rule: Vec::new(),
             ignore_package: Vec::new(),
             ignore_dependency: Vec::new(),
@@ -578,7 +647,9 @@ mod test {
     fn collect_root_issues_fixed() {
         let args = Args {
             fix: false,
+            select: None,
             no_install: true,
+            fail_on_warnings: false,
             path: "fixtures/root-issues-fixed".into(),
             ignore_rule: Vec::new(),
             ignore_package: Vec::new(),
@@ -597,7 +668,9 @@ mod test {
         let args = Args {
             path: "fixtures/dependencies".into(),
             fix: false,
+            select: None,
             no_install: true,
+            fail_on_warnings: false,
             ignore_rule: Vec::new(),
             ignore_package: Vec::new(),
             ignore_dependency: Vec::new(),
@@ -607,7 +680,7 @@ mod test {
         assert_eq!(packages_list.root_package.get_name(), "dependencies");
 
         let issues = collect_issues(&args, packages_list);
-        assert_eq!(issues.total_len(), 3);
+        assert_eq!(issues.total_len(), 4);
 
         let issues = issues.into_iter().collect::<IndexMap<_, _>>();
 
@@ -623,6 +696,10 @@ mod test {
             issues.get(&PackageType::None).unwrap()[2].name(),
             "multiple-dependency-versions"
         );
+        assert_eq!(
+            issues.get(&PackageType::None).unwrap()[3].name(),
+            "multiple-dependency-versions"
+        );
     }
 
     #[test]
@@ -630,26 +707,24 @@ mod test {
         let args = Args {
             path: "fixtures/dependencies".into(),
             fix: false,
+            select: None,
             no_install: false,
+            fail_on_warnings: false,
             ignore_rule: Vec::new(),
             ignore_package: Vec::new(),
-            ignore_dependency: vec!["next@4.5.6".to_string()],
+            ignore_dependency: vec!["next@4.5.6".to_string(), "*eslint*".to_string()],
         };
 
         let packages_list = collect_packages(&args).unwrap();
         assert_eq!(packages_list.root_package.get_name(), "dependencies");
 
         let issues = collect_issues(&args, packages_list);
-        assert_eq!(issues.total_len(), 2);
+        assert_eq!(issues.total_len(), 1);
 
         let issues = issues.into_iter().collect::<IndexMap<_, _>>();
 
         assert_eq!(
             issues.get(&PackageType::None).unwrap()[0].name(),
-            "multiple-dependency-versions"
-        );
-        assert_eq!(
-            issues.get(&PackageType::None).unwrap()[1].name(),
             "multiple-dependency-versions"
         );
     }
@@ -659,7 +734,9 @@ mod test {
         let args = Args {
             path: "fixtures/dependencies-star".into(),
             fix: false,
+            select: None,
             no_install: true,
+            fail_on_warnings: false,
             ignore_rule: Vec::new(),
             ignore_package: Vec::new(),
             ignore_dependency: Vec::new(),
@@ -688,7 +765,9 @@ mod test {
         let args = Args {
             path: "fixtures/dependencies-nested-star".into(),
             fix: false,
+            select: None,
             no_install: false,
+            fail_on_warnings: false,
             ignore_rule: Vec::new(),
             ignore_package: Vec::new(),
             ignore_dependency: Vec::new(),
@@ -720,7 +799,9 @@ mod test {
         let args = Args {
             path: "fixtures/pnpm-glob".into(),
             fix: false,
+            select: None,
             no_install: true,
+            fail_on_warnings: false,
             ignore_rule: Vec::new(),
             ignore_package: Vec::new(),
             ignore_dependency: Vec::new(),
@@ -739,7 +820,9 @@ mod test {
         let args = Args {
             path: "fixtures/unordered".into(),
             fix: false,
+            select: None,
             no_install: false,
+            fail_on_warnings: false,
             ignore_rule: Vec::new(),
             ignore_package: Vec::new(),
             ignore_dependency: Vec::new(),
@@ -764,6 +847,39 @@ mod test {
                 .unwrap()[0]
                 .name(),
             "unordered-dependencies"
+        );
+    }
+
+    #[test]
+    fn collect_unsync_similar_dependencies() {
+        let args = Args {
+            path: "fixtures/unsync".into(),
+            fix: false,
+            select: None,
+            no_install: false,
+            fail_on_warnings: false,
+            ignore_rule: Vec::new(),
+            ignore_package: Vec::new(),
+            ignore_dependency: Vec::new(),
+        };
+
+        let packages_list = collect_packages(&args).unwrap();
+        assert_eq!(packages_list.root_package.get_name(), "unsync");
+        assert_eq!(packages_list.packages.len(), 2);
+
+        let issues = collect_issues(&args, packages_list);
+        assert_eq!(issues.total_len(), 2);
+
+        let issues = issues.into_iter().collect::<IndexMap<_, _>>();
+
+        assert_eq!(
+            issues
+                .get(&PackageType::Package(
+                    "fixtures/unsync/packages/def".to_string()
+                ))
+                .unwrap()[0]
+                .name(),
+            "unsync-similar-dependencies"
         );
     }
 }
